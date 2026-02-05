@@ -1,6 +1,3 @@
-[submodule "android-app"]
-	path = android-app
-	url = https://github.com/Darkness1853/Android-Project
 [submodule "third_party/third_party/implot"]
 	path = third_party/third_party/implot
 	url = https://github.com/epezent/implot.git
