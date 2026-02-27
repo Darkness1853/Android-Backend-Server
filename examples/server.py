@@ -20,7 +20,7 @@ def start_zmq_server():
             packet_count += 1
 
             timestamp = time.strftime('%H:%M:%S')
-            with open(data_filename, 'w', encoding='utf-8') as file:
+            with open(data_filename, 'a', encoding='utf-8') as file:
                 file.write("Диалог между Сервером и Клиентом\n")
                 file.write(f"{timestamp}  #{packet_count}: {message}\n")
 

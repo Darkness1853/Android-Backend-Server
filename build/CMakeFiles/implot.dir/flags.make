@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I/usr/include/SDL2 -I"/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/Android-Backend-Server/include" -I"/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/Android-Backend-Server/third_party/implot" -I"/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/Android-Backend-Server/third_party/imgui"
+CXX_INCLUDES = -I/usr/include/SDL2 -I"/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/Android-Backend-Server/include" -I/usr/include/mit-krb5 -I/usr/include/pgm-5.3 -I/usr/include/libxml2 -I"/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/Android-Backend-Server/third_party/implot" -I"/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/Android-Backend-Server/third_party/imgui"
 
 CXX_FLAGS = -fPIC
 
