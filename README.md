@@ -22,10 +22,10 @@ https://github.com/user-attachments/assets/bf4a3228-51e0-46c1-9552-383498603dbd
   - Сохранение данных в файл .json
   - Связь между двумя потоками осуществялется при помощи одной общей структуры.
 
-
+Пока не реализовано: автоматическое подключение при потери связи, восстановление. (try, throw, catch) 
 
 --
 
 Мой главный проект в [Репозитории](https://github.com/Darkness1853/Android-Project)
 
-Мой Клиент для работы в [Репозитории](https://github.com/Darkness1853/Android-Project/tree/client_C%2B%2B)
+Мой клиент в [Репозитории](https://github.com/Darkness1853/Android-Project/tree/client_C%2B%2B)
