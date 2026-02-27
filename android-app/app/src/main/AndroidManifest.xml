@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"  />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
+        android:requestLegacyExternalStorage="true"
+        tools:targetApi="36">
+        <activity
+            android:name="com.example.SoketActivity"
+            android:exported="false"
+            android:label="Сокеты"/>
+        <activity
+            android:name="com.example.Mobile_ConnectActivity"
+            android:exported="false"
+            android:label="Мобильная сеть"/>
+        <activity
+            android:name="com.example.LocateActivity"
+            android:exported="false"
+            android:label="Локатор"/>
+        <activity
+            android:name="com.example.MediaActivity"
+            android:exported="false"
+            android:label="Медиаплеер" />
+        <activity
+            android:name="com.example.CalculatorActivity"
+            android:exported="false"
+            android:label="Калькулятор" />
+        <activity
+            android:name="com.example.MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

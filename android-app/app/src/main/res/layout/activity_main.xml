@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#191970"
+    android:orientation="vertical"
+    android:padding="25dp">
+
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:text="Visual_HUB"
+        android:gravity="center"
+        android:textSize="30sp"
+        android:layout_marginBottom="20dp"
+        android:textColor="#EBE0E0" />
+
+    <Button
+        android:id="@+id/GoCalculator"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/round_button"
+        android:layout_margin="4dp"
+        android:text="Калькулятор" />
+
+    <Button
+        android:id="@+id/GoMedia"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/round_button"
+        android:layout_margin="4dp"
+        android:text="Медиаплеер" />
+
+    <Button
+        android:id="@+id/GoLocate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/round_button"
+        android:layout_margin="4dp"
+        android:text="Локатор" />
+
+    <Button
+        android:id="@+id/GoMobile_connect"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/round_button"
+        android:layout_margin="4dp"
+        android:text="Мобильная связь" />
+
+    <Button
+        android:id="@+id/GoSoket"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/round_button"
+        android:layout_margin="4dp"
+        android:text="Сокеты" />
+
+    <Button
+        android:id="@+id/Exit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Выход"
+        android:background="@drawable/round_button_exit"
+        android:layout_marginTop="280dp"/>
+
+</LinearLayout>
