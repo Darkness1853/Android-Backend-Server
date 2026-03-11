@@ -1,0 +1,5 @@
+/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/app/Android-Backend-Server/CMakeFiles/imgui.dir
+/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/app/Android-Backend-Server/CMakeFiles/implot.dir
+/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/app/Android-Backend-Server/CMakeFiles/main.dir
+/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/app/Android-Backend-Server/CMakeFiles/edit_cache.dir
+/mnt/c/Users/~Darr_Kness~/git_test_2/Android-Project/app/Android-Backend-Server/CMakeFiles/rebuild_cache.dir

@@ -77,7 +77,8 @@ void run_gui(location *loc){
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport(0, nullptr, ImGuiDockNodeFlags_None);
 
-        {
+        {   
+            ImGui::StyleColorsDark();
             ImGui::Begin("Location Data");
             ImGui::Text("Latitude:  %.6f", loc->latitude);
             ImGui::Text("Longitude: %.6f", loc->longitude);
@@ -112,6 +113,7 @@ void run_gui(location *loc){
 void run_server(location *loc){
     zmq::context_t ctx(1);
     zmq::socket_t sock(ctx, zmq::socket_type::rep);
+    
     sock.bind("tcp://*:5050");
     cout << "Server connect port: 5050\n";
     
@@ -129,8 +131,8 @@ void run_server(location *loc){
                 if (j.value("type", "") == "ping_client") {
                     sock.send(zmq::buffer(R"({"type":"ping_server"})"), zmq::send_flags::none);
                     continue;
-                }
-                
+                } 
+
                 loc->latitude = j["latitude"];
                 loc->longitude = j["longitude"]; 
                 loc->altitude = j["altitude"];
@@ -149,7 +151,7 @@ void run_server(location *loc){
             } catch (...) {
                 sock.send(zmq::buffer(R"({"status":"error"})"), zmq::send_flags::none);
             }
-        }
+        } 
     }
 }
 
