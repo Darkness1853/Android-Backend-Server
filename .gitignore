@@ -3,7 +3,9 @@ build/
 *.so
 *.dll
 *.dylib
-main
-Makefile
-CMakeFiles/
-CMakeCache.txt
+*.vscode
+location_data.json
+cmake_install.cmake
+imgui.ini
+src/*
+!src/*.*
