@@ -34,8 +34,10 @@ pkg_check_modules(ZMQ REQUIRED libzmq)
 pkg_check_modules(GLEW REQUIRED glew)
 pkg_check_modules(GLFW REQUIRED glfw3)
 pkg_check_modules(NLOHMANN_JSON REQUIRED nlohmann_json)
+pkg_check_modules(CURL REQUIRED libcurl)
+pkg_check_modules(STB REQUIRED stb)
+pkg_check_modules(PQXX REQUIRED libpqxx)
 
-# PostgreSQL
 find_package(PostgreSQL REQUIRED)
 
 set(PROJECT_SOURCES
@@ -43,6 +45,8 @@ set(PROJECT_SOURCES
     ${SRC_DIR}/server.cpp
     ${SRC_DIR}/gui.cpp
     ${SRC_DIR}/db_client.cpp
+    ${SRC_DIR}/tile_manager.cpp
+    ${SRC_DIR}/map.cpp
     ${IMGUI_SOURCES}
     ${IMPLOT_SOURCES}
 )
@@ -52,6 +56,9 @@ set(PROJECT_HEADERS
     ${INCLUDE_DIR}/server.hpp
     ${INCLUDE_DIR}/gui.hpp
     ${INCLUDE_DIR}/db_client.hpp
+    ${INCLUDE_DIR}/tile_manager.hpp
+    ${INCLUDE_DIR}/map.hpp
+    ${INCLUDE_DIR}/MapPoint.hpp
 )
 
 add_executable(location_server ${PROJECT_SOURCES} ${PROJECT_HEADERS})
@@ -63,6 +70,9 @@ target_include_directories(location_server PRIVATE
     ${GLFW_INCLUDE_DIRS}
     ${NLOHMANN_JSON_INCLUDE_DIRS}
     ${PostgreSQL_INCLUDE_DIRS}
+    ${PQXX_INCLUDE_DIRS}
+    ${CURL_INCLUDE_DIRS}
+    ${STB_INCLUDE_DIRS}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${IMPLOT_DIR}
@@ -74,7 +84,10 @@ target_link_libraries(location_server
     ${GLFW_LIBRARIES}
     ${NLOHMANN_JSON_LIBRARIES}
     ${PostgreSQL_LIBRARIES}
+    ${PQXX_LIBRARIES}
     ${OPENGL_LIBRARIES}
+    ${CURL_LIBRARIES}
+    ${STB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
     pthread
     dl

@@ -1,4 +1,6 @@
 #include "gui.hpp"
+#include "map.hpp"
+#include "db_client.hpp"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -8,6 +10,45 @@
 #include <vector>
 #include <algorithm>
 #include <map>
+#include <memory>
+#include <pqxx/pqxx>
+#include <iostream>
+
+static std::vector<MapPoint> map_points;
+
+static void window_close_callback(GLFWwindow* window, Location* loc) {
+    loc->running = false;  
+    glfwSetWindowShouldClose(window, GLFW_TRUE);
+}
+
+static void load_points_from_db(pqxx::connection& db_conn) {
+    map_points.clear();
+    try {
+        pqxx::work txn(db_conn);
+        std::string query = 
+            "SELECT l.latitude, l.longitude, loc.timestamp "
+            "FROM locations l "
+            "JOIN location loc ON l.location_id = loc.id "
+            "WHERE l.latitude IS NOT NULL "
+            "AND l.longitude IS NOT NULL "
+            "ORDER BY loc.timestamp DESC";
+        
+        pqxx::result result = txn.exec(query);
+        for (const auto& row : result) {
+            MapPoint p;
+            p.lat = row[0].as<double>();
+            p.lon = row[1].as<double>();
+            p.timestamp = row[2].as<long long>();
+            p.signal_strength = -80;
+            map_points.push_back(p);
+        }
+        txn.commit();
+        update_map_points(map_points);
+        std::cout << "Loaded " << map_points.size() << " points from database" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading points: " << e.what() << std::endl;
+    }
+}
 
 void run_gui(Location* loc) {
     if (!glfwInit()) return;
@@ -24,6 +65,12 @@ void run_gui(Location* loc) {
     glfwSwapInterval(1);
     glewInit();
 
+    glfwSetWindowUserPointer(window, loc);
+    glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
+        Location* loc = static_cast<Location*>(glfwGetWindowUserPointer(w));
+        if (loc) loc->running = false;
+    });
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
@@ -32,6 +79,23 @@ void run_gui(Location* loc) {
 
     int current_graph = 0;
     const char* graph_items[] = { "RSRP", "RSRQ", "RSSI", "SINR" };
+
+    init_map();
+
+    std::string conn_str = "dbname=visual_db user=postgres password=postgres host=localhost port=5435";
+    std::unique_ptr<pqxx::connection> db_conn = nullptr;
+    try {
+        db_conn = std::make_unique<pqxx::connection>(conn_str);
+        if (db_conn->is_open()) {
+            load_points_from_db(*db_conn);
+            loc->db_connected = true;
+        } else {
+            loc->db_connected = false;
+        }
+    } catch (const std::exception& e) {
+        loc->db_connected = false;
+        std::cerr << "Failed to connect to database: " << e.what() << std::endl;
+    }
 
     while (!glfwWindowShouldClose(window) && loc->running) {
         glfwPollEvents();
@@ -227,6 +291,54 @@ void run_gui(Location* loc) {
                 } else {
                     ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "Database: Disconnected");
                 }
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Map")) {
+                ImGui::BeginChild("MapContent", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                
+                if (ImGui::Button("Center on Latest")) {
+                    std::lock_guard<std::mutex> lock(loc->mtx);
+                    if (loc->current_location.latitude != 0 || loc->current_location.longitude != 0) {
+                        set_map_center(loc->current_location.latitude, loc->current_location.longitude, 15);
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Zoom In")) {
+                    set_map_center(get_map_center_lat(), get_map_center_lon(), get_map_zoom() + 1);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Zoom Out")) {
+                    set_map_center(get_map_center_lat(), get_map_center_lon(), get_map_zoom() - 1);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset View")) {
+                    set_map_center(55.0084, 82.9357, 12);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh Points")) {
+                    if (db_conn && db_conn->is_open()) {
+                        load_points_from_db(*db_conn);
+                    }
+                }
+                
+                ImGui::Separator();
+                draw_map_ui();
+                ImGui::Separator();
+                
+                float w = ImGui::GetContentRegionAvail().x;
+                float h = w * 0.6f;
+                if (h < 200) h = 200;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 cp = ImGui::GetCursorScreenPos();
+                
+                ImGui::InvisibleButton("osm_map", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+                dl->AddRectFilled(cp, ImVec2(cp.x + w, cp.y + h), IM_COL32(30,30,40,255));
+                dl->AddRect(cp, ImVec2(cp.x + w, cp.y + h), IM_COL32(100,100,100,255));
+                draw_map(dl, cp, ImVec2(w, h));
+                handle_map_input(cp, ImVec2(w, h));
+                
+                ImGui::EndChild();
                 ImGui::EndTabItem();
             }
             

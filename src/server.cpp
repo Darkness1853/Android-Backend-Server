@@ -94,7 +94,6 @@ void run_server(Location* loc, int port) {
     while (loc->running) {
         zmq::pollitem_t items[] = { { socket, 0, ZMQ_POLLIN, 0 } };
         zmq::poll(items, 1, std::chrono::milliseconds(100));
-
         auto now = std::chrono::steady_clock::now();
         if (now - last_db_check >= std::chrono::seconds(30)) {
             last_db_check = now;
