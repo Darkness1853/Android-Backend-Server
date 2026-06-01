@@ -21,54 +21,60 @@ https://github.com/user-attachments/assets/bf4a3228-51e0-46c1-9552-383498603dbd
   - Работа с ZMQ: приема данных от устройства 
   - Сохранение данных в файл .json
   - Связь между двумя потоками осуществялется при помощи одной общей структуры.
-
+  - Работа с базой данных PostgreSQL
+  - Вывод графиков (графики сигнала RSRP,RSSI,SINR)
 --
 
 # Структура
 
 ```bash
-
-| - CMakeLists.txt
-│
+LocationServer/
+├── CMakeLists.txt
+├── DB/
+│   ├──docker-compose.yml          # PostgreSQL контейнер
+│   └──init.sql                    # Инициализация БД
 ├── include/
-│   ├── location.hpp          # Структуры данных (LocationData, MobileNetworkData, Location)
-│   ├── server.hpp            # Объявление функции run_server
-│   └── gui.hpp               # Объявление функции run_gui
-│
+│   ├── location.hpp            # Структуры (LocationData, MobileNetworkData, PerPCIData, Location)
+│   ├── server.hpp              # Объявление run_server
+│   ├── gui.hpp                 # Объявление run_gui
+│   └── db_client.hpp           # Класс DBClient (PostgreSQL)
 ├── src/
-│   ├── main.cpp              # main, запуск потоков
-│   ├── server.cpp            # ZeroMQ сервер, приём данных, сохранение в JSON
-│   └── gui.cpp               # ImGui интерфейс (вкладки Location, Networks, Graphs, Log, Stats)
+│   ├── main.cpp                # main, запуск потоков
+│   ├── server.cpp              # ZeroMQ сервер, приём данных, фильтрация, JSON
+│   ├── gui.cpp                 # ImGui интерфейс (Location, Networks, Graphs, Log, Stats)
+│   └── db_client.cpp           # Подключение к БД, сохранение данных
 │
 └── third_party/
-    ├── imgui/               
-    └── implot/              
+    ├── imgui/                  # ImGui (GUI)
+    └── implot/                 # ImPlot (графики)
 ```
 
 # Принцип работы (потоки)
 
-```bash
+ПОТОК GUI (run_gui)
+1. Инициализация GLFW и создание окна
+2. Инициализация GLEW, ImGui, ImPlot
+3. Вход в главный цикл while(!glfwWindowShouldClose())
+4. glfwPollEvents() - обработка событий окна
+5. ImGui_ImplOpenGL3_NewFrame() - начало нового кадра
+6. Отрисовка всех вкладок (Location, Networks, Graphs, Log, Stats)
+7. ImGui::Render() - рендер GUI
 
-main()
-   │
-   ├── thread gui_thread ──► run_gui()
-   │                              ├── glfwInit()
-   │                              ├── создание окна
-   │                              └── главный цикл рендеринга
-   │                                   ├── отображение Location
-   │                                   ├── отображение Mobile Networks
-   │                                   ├── отображение Graphs
-   │                                   ├── отображение Log
-   │                                   └── отображение Stats
-   │
-   └── thread server_thread ──► run_server()
-                                  ├── zmq bind на порт 5050
-                                  └── цикл приёма сообщений
-                                       ├── парсинг JSON
-                                       ├── обновление Location
-                                       ├── обновление mobile_networks
-                                       └── сохранение в JSON
-```
+ПОТОК СЕРВЕРА (run_server)
+1. Создание DBClient и подключение к PostgreSQL
+2. Создание ZeroMQ контекста и сокета
+3. socket.bind("tcp://*:5050") - ожидание подключений
+4. Вход в главный цикл while(loc->running)
+5. zmq::poll() - ожидание входящих сообщений
+6. ЕСЛИ есть входящее сообщение: 
+7. json::parse(json_str) - парсинг JSON
+8. Чтение send_id и location из JSON
+9. Чтение mobile_networks из JSON
+10. ЕСЛИ loc->recording == true:
+11. ЕСЛИ БД подключена:
+12. loc->message_count++
+13. Формирование JSON ответа
+14. socket.send() - отправка ответа клиенту
 
 Мой главный проект в [Репозитории](https://github.com/Darkness1853/Android-Project)
 

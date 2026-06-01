@@ -35,10 +35,14 @@ pkg_check_modules(GLEW REQUIRED glew)
 pkg_check_modules(GLFW REQUIRED glfw3)
 pkg_check_modules(NLOHMANN_JSON REQUIRED nlohmann_json)
 
+# PostgreSQL
+find_package(PostgreSQL REQUIRED)
+
 set(PROJECT_SOURCES
     ${SRC_DIR}/main.cpp
     ${SRC_DIR}/server.cpp
     ${SRC_DIR}/gui.cpp
+    ${SRC_DIR}/db_client.cpp
     ${IMGUI_SOURCES}
     ${IMPLOT_SOURCES}
 )
@@ -47,6 +51,7 @@ set(PROJECT_HEADERS
     ${INCLUDE_DIR}/location.hpp
     ${INCLUDE_DIR}/server.hpp
     ${INCLUDE_DIR}/gui.hpp
+    ${INCLUDE_DIR}/db_client.hpp
 )
 
 add_executable(location_server ${PROJECT_SOURCES} ${PROJECT_HEADERS})
@@ -57,6 +62,7 @@ target_include_directories(location_server PRIVATE
     ${GLEW_INCLUDE_DIRS}
     ${GLFW_INCLUDE_DIRS}
     ${NLOHMANN_JSON_INCLUDE_DIRS}
+    ${PostgreSQL_INCLUDE_DIRS}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${IMPLOT_DIR}
@@ -67,6 +73,7 @@ target_link_libraries(location_server
     ${GLEW_LIBRARIES}
     ${GLFW_LIBRARIES}
     ${NLOHMANN_JSON_LIBRARIES}
+    ${PostgreSQL_LIBRARIES}
     ${OPENGL_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
     pthread

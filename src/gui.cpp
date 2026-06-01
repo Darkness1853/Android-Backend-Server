@@ -7,6 +7,7 @@
 #include "implot.h"
 #include <vector>
 #include <algorithm>
+#include <map>
 
 void run_gui(Location* loc) {
     if (!glfwInit()) return;
@@ -14,7 +15,7 @@ void run_gui(Location* loc) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1200, 700, "Location Server", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1400, 800, "Location Server", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return;
@@ -29,8 +30,8 @@ void run_gui(Location* loc) {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    std::vector<float> rsrp_history(100, 0);
-    std::vector<float> rsrq_history(100, 0);
+    int current_graph = 0;
+    const char* graph_items[] = { "RSRP", "RSRQ", "RSSI", "SINR" };
 
     while (!glfwWindowShouldClose(window) && loc->running) {
         glfwPollEvents();
@@ -87,18 +88,28 @@ void run_gui(Location* loc) {
                 if (loc->mobile_networks.empty()) {
                     ImGui::Text("No Data");
                 } else {
-                    ImGui::Text("Networks: %d", (int)loc->mobile_networks.size());
+                    int active_count = 0;
+                    for (const auto& net : loc->mobile_networks) {
+                        if (net.is_active) active_count++;
+                    }
+                    ImGui::Text("Total cells: %d | Active cells: %d | Active PCI: %d", 
+                                (int)loc->mobile_networks.size(), active_count, loc->active_pci);
                     ImGui::Separator();
                     for (size_t i = 0; i < loc->mobile_networks.size(); ++i) {
                         const auto& net = loc->mobile_networks[i];
-                        ImGui::Text("Cell %d:", (int)(i+1));
+                        if (net.is_active) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Cell %d (ACTIVE):", (int)(i+1));
+                        } else {
+                            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cell %d (Neighbor):", (int)(i+1));
+                        }
                         ImGui::Text("  Type: %s", net.network_type.c_str());
                         ImGui::Text("  MCC: %s, MNC: %s", net.mcc.c_str(), net.mnc.c_str());
                         ImGui::Text("  Cell ID: %s", net.cell_identity.c_str());
                         ImGui::Text("  PCI: %d, TAC: %d", net.pci, net.tac);
                         ImGui::Text("  RSRP: %d dBm", net.rsrp);
                         ImGui::Text("  RSRQ: %d dB", net.rsrq);
-                        ImGui::Text("  RSSI: %d", net.rssi);
+                        ImGui::Text("  RSSI: %d dBm", net.rssi);
+                        ImGui::Text("  SINR: %d dB", net.sinr);
                         ImGui::Text("  Signal: %s", net.signal_strength.c_str());
                         ImGui::Separator();
                     }
@@ -107,45 +118,86 @@ void run_gui(Location* loc) {
             }
 
             if (ImGui::BeginTabItem("Graphs")) {
-                ImGui::Text("RSRP History (dBm)");
+                ImGui::Combo("Metric", &current_graph, graph_items, IM_ARRAYSIZE(graph_items));
                 ImGui::SameLine();
-                if (ImGui::Button("Clear")) {
-                    std::fill(rsrp_history.begin(), rsrp_history.end(), 0);
-                    std::fill(rsrq_history.begin(), rsrq_history.end(), 0);
-                } 
-                ImGui::Separator();
-
-                {
+                if (ImGui::Button("Clear History")) {
                     std::lock_guard<std::mutex> lock(loc->mtx);
-                    if (!loc->mobile_networks.empty()) {
-                        float avg_rsrp = 0, avg_rsrq = 0;
-                        for (const auto& net : loc->mobile_networks) {
-                            avg_rsrp += net.rsrp;
-                            avg_rsrq += net.rsrq;
-                        }
-                        avg_rsrp /= loc->mobile_networks.size();
-                        avg_rsrq /= loc->mobile_networks.size();
-
-                        for (int i = 0; i < 99; ++i) {
-                            rsrp_history[i] = rsrp_history[i+1];
-                            rsrq_history[i] = rsrq_history[i+1];
-                        }
-                        rsrp_history[99] = avg_rsrp;
-                        rsrq_history[99] = avg_rsrq;
+                    for (auto& pair : loc->per_pci_data) {
+                        PerPCIData& data = pair.second;
+                        std::fill(data.rsrp_history.begin(), data.rsrp_history.end(), -120);
+                        std::fill(data.rsrq_history.begin(), data.rsrq_history.end(), -20);
+                        std::fill(data.rssi_history.begin(), data.rssi_history.end(), -120);
+                        std::fill(data.sinr_history.begin(), data.sinr_history.end(), 0);
                     }
                 }
-                if (ImPlot::BeginPlot("RSRP", ImVec2(-1, 250))) {
-                    ImPlot::SetupAxes("Sample", "dBm");
-                    ImPlot::SetupAxisLimits(ImAxis_Y1, -140, -40);
-                    ImPlot::PlotLine("RSRP", rsrp_history.data(), rsrp_history.size());
-                    ImPlot::EndPlot();
+                ImGui::Separator();
+
+                ImVec2 graph_size = ImVec2(-1, 300);
+                
+                {
+                    std::lock_guard<std::mutex> lock(loc->mtx);
+                    
+                    if (current_graph == 0) {
+                        if (ImPlot::BeginPlot("RSRP - Active Cell Only", graph_size)) {
+                            ImPlot::SetupAxes("Sample", "dBm");
+                            ImPlot::SetupAxisLimits(ImAxis_Y1, -140, -40);
+                            if (loc->per_pci_data.find(loc->active_pci) != loc->per_pci_data.end()) {
+                                PerPCIData& data = loc->per_pci_data[loc->active_pci];
+                                std::string label = "PCI " + std::to_string(data.pci) + " (Active)";
+                                ImPlot::PlotLine(label.c_str(), &data.rsrp_history[0], data.rsrp_history.size());
+                            }
+                            ImPlot::EndPlot();
+                        }
+                    } else if (current_graph == 1) {
+                        if (ImPlot::BeginPlot("RSRQ - Active Cell Only", graph_size)) {
+                            ImPlot::SetupAxes("Sample", "dB");
+                            ImPlot::SetupAxisLimits(ImAxis_Y1, -34, -3);
+                            if (loc->per_pci_data.find(loc->active_pci) != loc->per_pci_data.end()) {
+                                PerPCIData& data = loc->per_pci_data[loc->active_pci];
+                                std::string label = "PCI " + std::to_string(data.pci) + " (Active)";
+                                ImPlot::PlotLine(label.c_str(), &data.rsrq_history[0], data.rsrq_history.size());
+                            }
+                            ImPlot::EndPlot();
+                        }
+                    } else if (current_graph == 2) {
+                        if (ImPlot::BeginPlot("RSSI - Active Cell Only", graph_size)) {
+                            ImPlot::SetupAxes("Sample", "dBm");
+                            ImPlot::SetupAxisLimits(ImAxis_Y1, -120, -20);
+                            if (loc->per_pci_data.find(loc->active_pci) != loc->per_pci_data.end()) {
+                                PerPCIData& data = loc->per_pci_data[loc->active_pci];
+                                std::string label = "PCI " + std::to_string(data.pci) + " (Active)";
+                                ImPlot::PlotLine(label.c_str(), &data.rssi_history[0], data.rssi_history.size());
+                            }
+                            ImPlot::EndPlot();
+                        }
+                    } else if (current_graph == 3) {
+                        if (ImPlot::BeginPlot("SINR - Active Cell Only", graph_size)) {
+                            ImPlot::SetupAxes("Sample", "dB");
+                            ImPlot::SetupAxisLimits(ImAxis_Y1, -10, 40);
+                            if (loc->per_pci_data.find(loc->active_pci) != loc->per_pci_data.end()) {
+                                PerPCIData& data = loc->per_pci_data[loc->active_pci];
+                                std::string label = "PCI " + std::to_string(data.pci) + " (Active)";
+                                ImPlot::PlotLine(label.c_str(), &data.sinr_history[0], data.sinr_history.size());
+                            }
+                            ImPlot::EndPlot();
+                        }
+                    }
                 }
-                if (ImPlot::BeginPlot("RSRQ", ImVec2(-1, 250))) {
-                    ImPlot::SetupAxes("Sample", "dB");
-                    ImPlot::SetupAxisLimits(ImAxis_Y1, -34, -3);
-                    ImPlot::PlotLine("RSRQ", rsrq_history.data(), rsrq_history.size());
-                    ImPlot::EndPlot();
+
+                ImGui::Separator();
+                ImGui::Text("Active Cell Info:");
+                std::lock_guard<std::mutex> lock(loc->mtx);
+                if (loc->active_pci != 0 && loc->per_pci_data.find(loc->active_pci) != loc->per_pci_data.end()) {
+                    PerPCIData& data = loc->per_pci_data[loc->active_pci];
+                    ImVec4 color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                    ImGui::TextColored(color, "Currently displaying: PCI %d (Active Cell)", data.pci);
+                    ImGui::Text("Last values - RSRP: %.0f dBm, RSRQ: %.0f dB, RSSI: %.0f dBm, SINR: %.0f dB",
+                                data.rsrp_history.back(), data.rsrq_history.back(), 
+                                data.rssi_history.back(), data.sinr_history.back());
+                } else {
+                    ImGui::Text("No active cell data available");
                 }
+                
                 ImGui::EndTabItem();
             }
 
@@ -166,7 +218,15 @@ void run_gui(Location* loc) {
                 ImGui::Text("Networks in cache: %zu", loc->mobile_networks.size());
                 ImGui::Text("Messages in log: %zu", loc->message_log.size());
                 ImGui::Text("Recording: %s", loc->recording ? "ON" : "OFF");
-                ImGui::Text("Saved count: %d", loc->saved_count);
+                ImGui::Text("Saved to JSON: %d", loc->saved_count);
+                ImGui::Text("Active PCI: %d", loc->active_pci);
+                ImGui::Text("Tracked PCIs: %zu", loc->per_pci_data.size());
+                ImGui::Separator();
+                if (loc->db_connected) {
+                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Database: Connected");
+                } else {
+                    ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "Database: Disconnected");
+                }
                 ImGui::EndTabItem();
             }
             
