@@ -1,67 +1,79 @@
-cmake_minimum_required(VERSION 3.14)
-project(backend_notes)
+cmake_minimum_required(VERSION 3.10)
+project(LocationServer)
 
+set(OpenGL_GL_PREFERENCE "GLVND")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(THIRD_PARTY_DIR ${PROJECT_SOURCE_DIR}/third_party)
-set(SRC_DIR ${PROJECT_SOURCE_DIR}/src)
-set(INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
+set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
+set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
+set(THIRD_PARTY_DIR ${CMAKE_SOURCE_DIR}/third_party)
 
-# SDL2
+set(IMGUI_DIR ${THIRD_PARTY_DIR}/imgui)
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+set(IMPLOT_DIR ${THIRD_PARTY_DIR}/implot)
+set(IMPLOT_SOURCES
+    ${IMPLOT_DIR}/implot.cpp
+    ${IMPLOT_DIR}/implot_items.cpp
+)
+
 find_package(OpenGL REQUIRED)
-find_package(GLEW REQUIRED)
-find_package(glfw3 REQUIRED)
+find_package(Threads REQUIRED)
 
-# ZeroMQ
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZMQ REQUIRED libzmq)
-include_directories(${ZMQ_INCLUDE_DIRS})
+pkg_check_modules(GLEW REQUIRED glew)
+pkg_check_modules(GLFW REQUIRED glfw3)
+pkg_check_modules(NLOHMANN_JSON REQUIRED nlohmann_json)
 
-find_package(nlohmann_json REQUIRED)
-
-include_directories(${INCLUDE_DIR})
-
-add_library(imgui STATIC
-    ${THIRD_PARTY_DIR}/imgui/imgui.cpp
-    ${THIRD_PARTY_DIR}/imgui/imgui_draw.cpp
-    ${THIRD_PARTY_DIR}/imgui/imgui_demo.cpp
-    ${THIRD_PARTY_DIR}/imgui/imgui_tables.cpp
-    ${THIRD_PARTY_DIR}/imgui/imgui_widgets.cpp
-    ${THIRD_PARTY_DIR}/imgui/backends/imgui_impl_glfw.cpp     
-    ${THIRD_PARTY_DIR}/imgui/backends/imgui_impl_opengl3.cpp  
+set(PROJECT_SOURCES
+    ${SRC_DIR}/main.cpp
+    ${SRC_DIR}/server.cpp
+    ${SRC_DIR}/gui.cpp
+    ${IMGUI_SOURCES}
+    ${IMPLOT_SOURCES}
 )
 
-target_include_directories(imgui PUBLIC 
-    ${THIRD_PARTY_DIR}/imgui
-    ${THIRD_PARTY_DIR}/imgui/backends
+set(PROJECT_HEADERS
+    ${INCLUDE_DIR}/location.hpp
+    ${INCLUDE_DIR}/server.hpp
+    ${INCLUDE_DIR}/gui.hpp
 )
 
-target_compile_options(imgui PRIVATE -fPIC)
-target_link_libraries(imgui PRIVATE glfw ${OPENGL_LIBRARIES})
+add_executable(location_server ${PROJECT_SOURCES} ${PROJECT_HEADERS})
 
-add_library(implot STATIC
-    ${THIRD_PARTY_DIR}/implot/implot.cpp
-    ${THIRD_PARTY_DIR}/implot/implot_demo.cpp
-    ${THIRD_PARTY_DIR}/implot/implot_items.cpp
+target_include_directories(location_server PRIVATE
+    ${INCLUDE_DIR}
+    ${ZMQ_INCLUDE_DIRS}
+    ${GLEW_INCLUDE_DIRS}
+    ${GLFW_INCLUDE_DIRS}
+    ${NLOHMANN_JSON_INCLUDE_DIRS}
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+    ${IMPLOT_DIR}
 )
 
-target_include_directories(implot PUBLIC ${THIRD_PARTY_DIR}/implot)
-target_link_libraries(implot PRIVATE imgui)
-target_compile_options(implot PRIVATE -fPIC)
-
-add_executable(main ${SRC_DIR}/main.cpp)
-
-target_link_libraries(main PRIVATE 
-    imgui 
-    implot 
-    glfw
-    ${SDL2_LIBRARIES} 
-    ${OPENGL_LIBRARIES} 
-    ${GLEW_LIBRARIES}
+target_link_libraries(location_server
     ${ZMQ_LIBRARIES}
+    ${GLEW_LIBRARIES}
+    ${GLFW_LIBRARIES}
+    ${NLOHMANN_JSON_LIBRARIES}
+    ${OPENGL_LIBRARIES}
+    ${CMAKE_THREAD_LIBS_INIT}
     pthread
-    nlohmann_json::nlohmann_json
+    dl
+    X11
 )
 
-target_compile_options(main PRIVATE -Wall -Wextra)
+target_compile_definitions(location_server PRIVATE
+    IMGUI_IMPL_OPENGL_LOADER_GLEW
+)

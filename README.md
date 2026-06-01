@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/bf4a3228-51e0-46c1-9552-383498603dbd
 
 ---
 
-### 9. Backend-сервер на C++
+### Backend-сервер на C++
 
   ***Описание***
 
@@ -22,9 +22,53 @@ https://github.com/user-attachments/assets/bf4a3228-51e0-46c1-9552-383498603dbd
   - Сохранение данных в файл .json
   - Связь между двумя потоками осуществялется при помощи одной общей структуры.
 
-Пока не реализовано: автоматическое подключение при потери связи, восстановление. (try, throw, catch) 
-
 --
+
+# Структура
+
+```bash
+
+| - CMakeLists.txt
+│
+├── include/
+│   ├── location.hpp          # Структуры данных (LocationData, MobileNetworkData, Location)
+│   ├── server.hpp            # Объявление функции run_server
+│   └── gui.hpp               # Объявление функции run_gui
+│
+├── src/
+│   ├── main.cpp              # main, запуск потоков
+│   ├── server.cpp            # ZeroMQ сервер, приём данных, сохранение в JSON
+│   └── gui.cpp               # ImGui интерфейс (вкладки Location, Networks, Graphs, Log, Stats)
+│
+└── third_party/
+    ├── imgui/               
+    └── implot/              
+```
+
+# Принцип работы (потоки)
+
+```bash
+
+main()
+   │
+   ├── thread gui_thread ──► run_gui()
+   │                              ├── glfwInit()
+   │                              ├── создание окна
+   │                              └── главный цикл рендеринга
+   │                                   ├── отображение Location
+   │                                   ├── отображение Mobile Networks
+   │                                   ├── отображение Graphs
+   │                                   ├── отображение Log
+   │                                   └── отображение Stats
+   │
+   └── thread server_thread ──► run_server()
+                                  ├── zmq bind на порт 5050
+                                  └── цикл приёма сообщений
+                                       ├── парсинг JSON
+                                       ├── обновление Location
+                                       ├── обновление mobile_networks
+                                       └── сохранение в JSON
+```
 
 Мой главный проект в [Репозитории](https://github.com/Darkness1853/Android-Project)
 
