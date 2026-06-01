@@ -1,475 +1,384 @@
 #include <GL/glew.h>
-#include <SDL2/SDL.h>
-#include <iostream>
-#include <thread>
-#include <zmq.hpp>
-#include <nlohmann/json.hpp>
-#include <atomic>
-#include <fstream>
-#include <iomanip>
+#include <GLFW/glfw3.h>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+#include "implot.h"
 #include <vector>
 #include <deque>
-#include <cmath>
-#include <set>
-#include <numeric>
-#include "imgui.h"
-#include "implot.h"
-#include "backends/imgui_impl_opengl3.h"
-#include "backends/imgui_impl_sdl2.h"
+#include <thread>
+#include <chrono>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <atomic>
+#include <zmq.hpp>
+#include <nlohmann/json.hpp>
 
-using namespace std;
 using json = nlohmann::json;
+using namespace std;
 
-struct CellData {
-    int lteCount = 0;
-    int gsmCount = 0;
-    int nrCount = 0;
-    string lastLteInfo;
-    string lastGsmInfo;
-    string lastNrInfo;
-    json fullCellData;
-    json lastRawData;
-    
-    vector<int> rsrpValues;
-    vector<int> rsrqValues;
-    vector<int> rssiValues;
-    vector<double> timestamps;
-    vector<int> pciValues;
-    vector<int> cellIds;
-    
-    deque<double> rsrpHistory;
-    deque<double> rsrqHistory;
-    deque<double> timeHistory;
-    int maxHistorySize = 100;
-};
-
-struct location
-{
+struct LocationData {
     double latitude = 0.0;
     double longitude = 0.0;
     double altitude = 0.0;
-    string timeStr;
-    int count = 0;
-    CellData cellData;
+    double accuracy = 0.0;
+    double vertical_accuracy = 0.0;
+    double bearing = 0.0;
+    double speed = 0.0;
+    long long time = 0;
+    string time_formatted;
+    int send_id = 0;
 };
 
-atomic<bool> run{true};
+struct MobileNetworkData {
+    string network_type;
+    string mcc;
+    string mnc;
+    string cell_identity;
+    int pci = 0;
+    int tac = 0;
+    int rsrp = 0;
+    int rsrq = 0;
+    int rssi = 0;
+    string signal_strength;
+    long long time = 0;
+};
 
-void save_to_json(const location& loc, const json& mobileNetworkData, const json& locationData) {
+struct Location {
+    mutex mtx;
+    LocationData current_location;
+    deque<MobileNetworkData> mobile_networks;
+    deque<string> message_log;
+    int message_count = 0;
+    int last_send_id = 0;
+    bool running = true;
+    atomic<bool> recording{false};
+    int saved_count = 0;
+};
+
+void save_to_json(Location* loc, const json& mobileNetworkData, const json& locationData) {
     try {
-        json j;
-        j["timestamp"] = locationData.value("Time", 0LL);
-        j["timestamp_formatted"] = locationData.value("TimeFormatted", "");
-        j["send_id"] = locationData.value("send_id", 0);
+        json output;
         
-        j["location"] = {
-            {"latitude", loc.latitude},
-            {"longitude", loc.longitude},
-            {"altitude", loc.altitude},
-            {"speed", locationData.value("Speed", 0.0)},
-            {"bearing", locationData.value("Bearing", 0.0)},
-            {"accuracy", locationData.value("Accuracy", 0.0)},
-            {"vertical_accuracy", locationData.value("VerticalAccuracy", 0.0)},
-            {"time", locationData.value("Time", 0LL)},
-            {"time_formatted", locationData.value("TimeFormatted", "")}
+        output["location"] = {
+            {"latitude", locationData.value("latitude", 0.0)},
+            {"longitude", locationData.value("longitude", 0.0)},
+            {"altitude", locationData.value("altitude", 0.0)},
+            {"speed", locationData.value("speed", 0.0)},
+            {"bearing", locationData.value("bearing", 0.0)},
+            {"accuracy", locationData.value("accuracy", 0.0)},
+            {"vertical_accuracy", locationData.value("vertical_accuracy", 0.0)}
         };
         
-        j["mobile_networks"] = mobileNetworkData;
+        json mobile_network;
+        json networks = json::array();
+        
+        if (mobileNetworkData.contains("MobileNetworks")) {
+            networks = mobileNetworkData["MobileNetworks"];
+        }
+        
+        mobile_network["MobileNetworks"] = networks;
+        output["mobile_network"] = mobile_network;
         
         string filename = "location_data.json";
         ofstream file(filename, ios::app);
         if (file.is_open()) {
-            file << j.dump(4) << ",\n";
+            file << output.dump() << "\n";
             file.close();
+            loc->saved_count++;
         }
+        
     } catch (const exception& e) {
-        cerr << "Ошибка сохранения в JSON: " << e.what() << endl;
+        cerr << "Error saving to JSON: " << e.what() << endl;
     }
 }
 
-void upd_CellData_History(location* loc, const json& networks) {
-    if (!networks.is_array()) return;
-    
-    double currentTime;
-    if (loc->cellData.timestamps.empty()) {
-        currentTime = 0;
-    } else {
-    currentTime = loc->cellData.timestamps.back() + 1;  
-    }
-    
-    loc->cellData.timestamps.push_back(currentTime);
-    loc->cellData.timeHistory.push_back(currentTime);
-    if (loc->cellData.timeHistory.size() > loc->cellData.maxHistorySize) {
-        loc->cellData.timeHistory.pop_front();
-    }
-    
-    int bestRSRP = -1000;
-    int bestRSRQ = -1000;
-    int bestRSSI = -1000;
-    int bestPCI = 0;
-    
-    for (const auto& network : networks) {
-        string netType = network.value("NetworkType", "");
-        
-        if (netType.find("Lte") != string::npos) {
-            int rsrp = network.value("RSRP",-1000);
-            int rsrq = network.value("RSRQ",-1000);
-            int rssi = network.value("RSSI",-1000);
-            int pci = network.value("PCI",0);
-            
-            if (rsrp > bestRSRP) {
-                bestRSRP = rsrp;
-                bestRSRQ = rsrq;
-                bestRSSI = rssi;
-                bestPCI = pci;
-            }
-            
-            loc->cellData.rsrpValues.push_back(rsrp);
-            loc->cellData.rsrqValues.push_back(rsrq);
-            loc->cellData.rssiValues.push_back(rssi);
-            loc->cellData.pciValues.push_back(pci);
-            
-            if (network.contains("CellIdentity")) {
-                string cellId = network.value("CellIdentity", "0");
-                try {
-                    loc->cellData.cellIds.push_back(stoi(cellId));
-                } catch (...) {
-                    loc->cellData.cellIds.push_back(0);
-                }
-            }
-        }
-    }
-    
-    if (bestRSRP > -1000) {
-        loc->cellData.rsrpHistory.push_back(bestRSRP);
-        loc->cellData.rsrqHistory.push_back(bestRSRQ);
-        
-        if (loc->cellData.rsrpHistory.size() > loc->cellData.maxHistorySize) {
-            loc->cellData.rsrpHistory.pop_front();
-            loc->cellData.rsrqHistory.pop_front();
-        }
-    }
-}
+void run_gui(Location* loc) {
+    if (!glfwInit()) return;
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-void run_gui(location *loc){
-    SDL_Init(SDL_INIT_VIDEO);
-    
-    SDL_DisplayMode DM;
-    SDL_GetCurrentDisplayMode(0, &DM);
-    int screenWidth = DM.w;
-    int screenHeight = DM.h;
-    
-    SDL_Window* window = SDL_CreateWindow(
-        "Server", 
-        SDL_WINDOWPOS_CENTERED, 
-        SDL_WINDOWPOS_CENTERED,
-        screenWidth, 
-        screenHeight, 
-        SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP);
-    
-    SDL_GLContext gl_context = SDL_GL_CreateContext(window);
+    GLFWwindow* window = glfwCreateWindow(1200, 700, "Location Server", NULL, NULL);
+    if (!window) {
+        glfwTerminate();
+        return;
+    }
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+    glewInit();
 
+    IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.FontGlobalScale = 1.3f;
-
-    ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    while (run) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            ImGui_ImplSDL2_ProcessEvent(&event);
-            if (event.type == SDL_QUIT) {
-                run = false;
-            }
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
-                run = false;
-            }
-        }
+    vector<float> rsrp_history(100, 0);
+    vector<float> rsrq_history(100, 0);
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
-        ImGui::NewFrame();
+    while (!glfwWindowShouldClose(window) && loc->running) {
+        glfwPollEvents();
         
-        ImGui::DockSpaceOverViewport(0, nullptr, ImGuiDockNodeFlags_PassthruCentralNode);
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
 
-        {   
-            ImGui::StyleColorsDark();
-            
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-            ImGui::Begin("Network");
-            
-            if (ImGui::BeginTable("MainTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders)) {
-                ImGui::TableSetupColumn("Location Info", ImGuiTableColumnFlags_WidthStretch, 0.2f);
-                ImGui::TableSetupColumn("Network Data", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                ImGui::TableSetupColumn("Graphs", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                ImGui::TableHeadersRow();
-                
-                ImGui::TableNextColumn();
-                ImGui::BeginChild("LocationPane", ImVec2(0, 0), true);
-                
-                ImGui::Text("LOCATION INFORMATION");
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+        ImGui::Begin("Server", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+
+        if (ImGui::BeginTabBar("MainTabs")) {
+            if (ImGui::BeginTabItem("Location")) {
+                lock_guard<mutex> lock(loc->mtx);
+                ImGui::Text("Send ID: %d", loc->current_location.send_id);
                 ImGui::Separator();
-                ImGui::Text("Messages: %d", loc->count);
-                ImGui::Separator();
-                ImGui::Text("Lat: %.6f", loc->latitude);
-                ImGui::Text("Lon: %.6f", loc->longitude);
-                ImGui::Text("Alt: %.2f m", loc->altitude);
-                ImGui::Text("Time: %s", loc->timeStr.c_str());
-                
-                ImGui::Separator();
-                ImGui::Text("CELL SUMMARY");
-                ImGui::Separator();
-                ImGui::Text("LTE: %d", loc->cellData.lteCount);
-                ImGui::Text("GSM: %d", loc->cellData.gsmCount);
-                ImGui::Text("5G: %d", loc->cellData.nrCount);
-                
-                if (!loc->cellData.lastLteInfo.empty()) {
-                    ImGui::Separator();
-                    ImGui::Text ("Last LTE:");
-                    ImGui::TextWrapped("%s", loc->cellData.lastLteInfo.c_str());
-                }
-                
-                ImGui::EndChild();
-                
-                ImGui::TableNextColumn();
-                ImGui::BeginChild("NetworkPane", ImVec2(0, 0), true);
-                ImGui::Text ("NETWORK DATA");
+                ImGui::Text("Latitude: %.6f", loc->current_location.latitude);
+                ImGui::Text("Longitude: %.6f", loc->current_location.longitude);
+                ImGui::Text("Altitude: %.1f m", loc->current_location.altitude);
+                ImGui::Text("Accuracy: %.2f m", loc->current_location.accuracy);
+                ImGui::Text("Vertical Accuracy: %.2f m", loc->current_location.vertical_accuracy);
+                ImGui::Text("Speed: %.2f m/s", loc->current_location.speed);
+                ImGui::Text("Bearing: %.1f deg", loc->current_location.bearing);
+                ImGui::Text("Time: %s", loc->current_location.time_formatted.c_str());
                 ImGui::Separator();
                 
-                if (loc->cellData.fullCellData.is_array() && !loc->cellData.fullCellData.empty()) {
-                    for (size_t i = 0; i < loc->cellData.fullCellData.size(); i++) {
-                        const auto& cell = loc->cellData.fullCellData[i];
-                        
-                        string cellType = cell.value("NetworkType", "Unknown");
-                        ImGui::PushID(static_cast<int>(i));
-                        
-                        ImGui::Text ("%s Cell #%d", 
-                            cellType.c_str(), static_cast<int>(i+1));
-                        
-                        if (ImGui::TreeNode(("Details##" + to_string(i)).c_str())) {
-                            for (auto& [key, value] : cell.items()) {
-                                if (value.is_string()) {
-                                    ImGui::Text("%s: %s", key.c_str(), value.get<string>().c_str());
-                                } else if (value.is_number()) {
-                                    ImGui::Text("%s: %g", key.c_str(), value.get<double>());
-                                }
-                            }
-                            
-                            if (cell.contains("RSRP") && cell.contains("RSRQ")) {
-                                int rsrp = cell.value("RSRP", 0);
-                                int rsrq = cell.value("RSRQ", 0);
-                                ImGui::Text("RSRP: %d dBm", rsrp);
-                                ImGui::Text("RSRQ: %d dB", rsrq);
-                            }
-                            
-                            ImGui::TreePop();
-                        }
-                        
-                        ImGui::Separator();
-                        ImGui::PopID();
+                if (loc->recording) {
+                    if (ImGui::Button("STOP SAVE JSON")) {
+                        loc->recording = false;
+                        string log_entry = "[System] Stop save Json. Saved " + to_string(loc->saved_count);
+                        loc->message_log.push_back(log_entry);
+                        if (loc->message_log.size() > 100) loc->message_log.pop_front();
                     }
+                    ImGui::SameLine();
+                    ImGui::Text("SAVE JSON");
+                    ImGui::SameLine();
+                    ImGui::Text("Saved: %d", loc->saved_count);
                 } else {
-                    ImGui::Text ("No network data");
+                    if (ImGui::Button("START SAVE JSON")) {
+                        loc->recording = true;
+                        loc->saved_count = 0;
+                        string log_entry = "[System] Start save Json. To file location_data.json";
+                        loc->message_log.push_back(log_entry);
+                        if (loc->message_log.size() > 100) loc->message_log.pop_front();
+                    }
                 }
                 
-                ImGui::EndChild();
-                
-                ImGui::TableNextColumn();
-                ImGui::BeginChild("GraphsPane", ImVec2(0, 0), true);
-                ImGui::Text ("SIGNAL GRAPHS");
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Mobile Networks")) {
+                lock_guard<mutex> lock(loc->mtx);
+                if (loc->mobile_networks.empty()) {
+                    ImGui::Text("No Data");
+                } else {
+                    ImGui::Text("Networks: %d", (int)loc->mobile_networks.size());
+                    ImGui::Separator();
+                    for (size_t i = 0; i < loc->mobile_networks.size(); ++i) {
+                        const auto& net = loc->mobile_networks[i];
+                        ImGui::Text("Cell %d:", (int)(i+1));
+                        ImGui::Text("  Type: %s", net.network_type.c_str());
+                        ImGui::Text("  MCC: %s, MNC: %s", net.mcc.c_str(), net.mnc.c_str());
+                        ImGui::Text("  Cell ID: %s", net.cell_identity.c_str());
+                        ImGui::Text("  PCI: %d, TAC: %d", net.pci, net.tac);
+                        ImGui::Text("  RSRP: %d dBm", net.rsrp);
+                        ImGui::Text("  RSRQ: %d dB", net.rsrq);
+                        ImGui::Text("  RSSI: %d", net.rssi);
+                        ImGui::Text("  Signal: %s", net.signal_strength.c_str());
+                        ImGui::Separator();
+                    }
+                }
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Graphs")) {
+                ImGui::Text("RSRP History (dBm)");
+                ImGui::SameLine();
+                if (ImGui::Button("Clear")) {
+                    fill(rsrp_history.begin(), rsrp_history.end(), 0);
+                    fill(rsrq_history.begin(), rsrq_history.end(), 0);
+                } 
                 ImGui::Separator();
-                
-                if (ImPlot::BeginPlot("Signal Strength History", ImVec2(-1, 250))) {
-                    ImPlot::SetupAxes("Time", "dBm");
-                    ImPlot::SetupAxisLimits(ImAxis_X1, 
-                        loc->cellData.timeHistory.empty() ? 0 : loc->cellData.timeHistory.front(),
-                        loc->cellData.timeHistory.empty() ? 10 : loc->cellData.timeHistory.back() + 1);
+
+                {
+                    lock_guard<mutex> lock(loc->mtx);
+                    if (!loc->mobile_networks.empty()) {
+                        float avg_rsrp = 0, avg_rsrq = 0;
+                        for (const auto& net : loc->mobile_networks) {
+                            avg_rsrp += net.rsrp;
+                            avg_rsrq += net.rsrq;
+                        }
+                        avg_rsrp /= loc->mobile_networks.size();
+                        avg_rsrq /= loc->mobile_networks.size();
+
+                        for (int i = 0; i < 99; ++i) {
+                            rsrp_history[i] = rsrp_history[i+1];
+                            rsrq_history[i] = rsrq_history[i+1];
+                        }
+                        rsrp_history[99] = avg_rsrp;
+                        rsrq_history[99] = avg_rsrq;
+                    }
+                }
+                if (ImPlot::BeginPlot("RSRP", ImVec2(-1, 250))) {
+                    ImPlot::SetupAxes("Sample", "dBm");
                     ImPlot::SetupAxisLimits(ImAxis_Y1, -140, -40);
-                    
-                    if (!loc->cellData.timeHistory.empty() && !loc->cellData.rsrpHistory.empty()) {
-                        vector<double> timeVec(loc->cellData.timeHistory.begin(), 
-                                              loc->cellData.timeHistory.end());
-                        vector<double> rsrpVec(loc->cellData.rsrpHistory.begin(), 
-                                              loc->cellData.rsrpHistory.end());
-                        
-                        ImPlot::PlotLine("RSRP (dBm)", 
-                            timeVec.data(), rsrpVec.data(), 
-                            static_cast<int>(min(timeVec.size(), rsrpVec.size())));
-                    }
-                    
+                    ImPlot::PlotLine("RSRP", rsrp_history.data(), rsrp_history.size());
                     ImPlot::EndPlot();
                 }
-                
-                if (ImPlot::BeginPlot("RSRQ History", ImVec2(-1, 250))) {
-                    ImPlot::SetupAxes("Time", "dB");
-                    ImPlot::SetupAxisLimits(ImAxis_X1, 
-                        loc->cellData.timeHistory.empty() ? 0 : loc->cellData.timeHistory.front(),
-                        loc->cellData.timeHistory.empty() ? 10 : loc->cellData.timeHistory.back() + 1);
-                    ImPlot::SetupAxisLimits(ImAxis_Y1, -25, -5);
-                    
-                    if (!loc->cellData.timeHistory.empty() && !loc->cellData.rsrqHistory.empty()) {
-                        vector<double> timeVec(loc->cellData.timeHistory.begin(), 
-                                              loc->cellData.timeHistory.end());
-                        vector<double> rsrqVec(loc->cellData.rsrqHistory.begin(), 
-                                              loc->cellData.rsrqHistory.end());
-                        
-                        ImPlot::PlotLine("RSRQ (dB)", 
-                            timeVec.data(), rsrqVec.data(), 
-                            static_cast<int>(min(timeVec.size(), rsrqVec.size())));
-                    }
-                    
+                if (ImPlot::BeginPlot("RSRQ", ImVec2(-1, 250))) {
+                    ImPlot::SetupAxes("Sample", "dB");
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, -34, -3);
+                    ImPlot::PlotLine("RSRQ", rsrq_history.data(), rsrq_history.size());
                     ImPlot::EndPlot();
                 }
-                
-                ImGui::Separator();
-                ImGui::Text ("STATISTICS");
-                ImGui::Separator();
-                
-                if (!loc->cellData.rsrpValues.empty()) {
-                    int minRSRP = *min_element(loc->cellData.rsrpValues.begin(), 
-                                               loc->cellData.rsrpValues.end());
-                    int maxRSRP = *max_element(loc->cellData.rsrpValues.begin(), 
-                                               loc->cellData.rsrpValues.end());
-                    double avgRSRP = accumulate(loc->cellData.rsrpValues.begin(), 
-                                                loc->cellData.rsrpValues.end(), 0.0) / 
-                                                loc->cellData.rsrpValues.size();
-                    
-                    ImGui::Text("RSRP Range: %d to %d dBm", minRSRP, maxRSRP);
-                    ImGui::Text("Average RSRP: %.1f dBm", avgRSRP);
-                    
-                    if (!loc->cellData.pciValues.empty()) {
-                        set<int> uniquePCIs(loc->cellData.pciValues.begin(), 
-                                           loc->cellData.pciValues.end());
-                        ImGui::Text("Unique PCI count: %zu", uniquePCIs.size());
-                    }
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Log")) {
+                lock_guard<mutex> lock(loc->mtx);
+                ImGui::BeginChild("LogScroll", ImVec2(0, 400), true);
+                for (const auto& log : loc->message_log) {
+                    ImGui::Text("%s", log.c_str());
                 }
-                
                 ImGui::EndChild();
-                
-                ImGui::EndTable();
+                ImGui::EndTabItem();
             }
             
-            ImGui::End();
+            ImGui::EndTabBar();
         }
 
+        ImGui::End();
         ImGui::Render();
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        SDL_GL_SwapWindow(window);
-        this_thread::sleep_for(chrono::milliseconds(10));
+
+        glfwSwapBuffers(window);
     }
 
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
-    SDL_GL_DeleteContext(gl_context);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    glfwDestroyWindow(window);
+    glfwTerminate();
 }
 
-void run_server(location *loc){
-    zmq::context_t ctx(1);
-    zmq::socket_t sock(ctx, zmq::socket_type::rep);
+void run_server(Location* loc, int port) {
+    zmq::context_t context(1);
+    zmq::socket_t socket(context, zmq::socket_type::rep);
     
-    sock.bind("tcp://*:5050");
+    socket.bind("tcp://*:" + std::to_string(port));
     
-    int count = 0;
+    auto getCurrentTime = []() -> string {
+        auto now = chrono::system_clock::now();
+        auto now_c = chrono::system_clock::to_time_t(now);
+        string time_str = ctime(&now_c);
+        time_str.pop_back();
+        return time_str;
+    };
     
-    while (run) {
-        zmq::message_t request;
-        
-        if (sock.recv(request, zmq::recv_flags::none)) {
-            string received_data(static_cast<char*>(request.data()), request.size());
-            
+    while (loc->running) {
+        zmq::pollitem_t items[] = { { socket, 0, ZMQ_POLLIN, 0 } };
+        zmq::poll(items, 1, std::chrono::milliseconds(100));
+
+        if (items[0].revents & ZMQ_POLLIN) {
+            zmq::message_t request;
+            auto recv_result = socket.recv(request, zmq::recv_flags::none);
+            if (!recv_result.has_value()) continue;
+
+            std::string json_str(static_cast<char*>(request.data()), request.size());
+
             try {
-                json j = json::parse(received_data);
-                
-                if (j.value("type", "") == "ping_client") {
-                    sock.send(zmq::buffer(R"({"type":"ping_server"})"), zmq::send_flags::none);
+                json root = json::parse(json_str);
+
+                std::lock_guard<std::mutex> lock(loc->mtx);
+
+                if (root.contains("type") && root["type"] == "ping_client") {
+                    json response = {{"status", "ok"}, {"type", "ping_server"}, {"message", "Pong"}};
+                    std::string resp_str = response.dump();
+                    socket.send(zmq::buffer(resp_str), zmq::send_flags::none);
                     continue;
                 }
-                
-                count++;
-                
-                if (j.contains("location_data")) {
-                    json locationData = j["location_data"];
-                    
-                    loc->latitude = locationData.value("Latitude", 0.0);
-                    loc->longitude = locationData.value("Longitude", 0.0);
-                    loc->altitude = locationData.value("Altitude", 0.0);
-                    loc->timeStr = locationData.value("TimeFormatted", "");
-                    loc->count = count;
+
+                if (root.contains("send_id")) {
+                    loc->last_send_id = root["send_id"].get<int>();
+                    loc->current_location.send_id = loc->last_send_id;
                 }
-                
-                loc->cellData.lteCount = 0;
-                loc->cellData.gsmCount = 0;
-                loc->cellData.nrCount = 0;
-                loc->cellData.lastRawData = j;
-                
-                if (j.contains("mobile_network_data_list") && 
-                    j["mobile_network_data_list"].contains("MobileNetworks")) {
-                    
-                    auto& networks = j["mobile_network_data_list"]["MobileNetworks"];
-                    loc->cellData.fullCellData = networks;
-                    
-                    upd_CellData_History(loc, networks);
-                    
-                    for (const auto& network : networks) {
-                        string netType = network.value("NetworkType", "");
-                        
-                        if (netType.find("Lte") != string::npos) {
-                            loc->cellData.lteCount++;
-                            if (loc->cellData.lteCount == 1) {
-                                int rsrp = network.value("RSRP", 0);
-                                int pci = network.value("PCI", 0);
-                                int tac = network.value("TAC", 0);
-                                int rsrq = network.value("RSRQ", 0);
-                                loc->cellData.lastLteInfo = "PCI: " + to_string(pci) + " | TAC: " + to_string(tac) +" | RSRP: " + to_string(rsrp) + " dBm" + " | RSRQ: " + to_string(rsrq) + " dB";
-                            }
-                        }
-                        else if (netType.find("Gsm") != string::npos) {
-                            loc->cellData.gsmCount++;
-                        }
-                        else if (netType.find("Nr") != string::npos) {
-                            loc->cellData.nrCount++;
-                        }
+
+                json location_data;
+                json mobile_data;
+
+                if (root.contains("location")) {
+                    const auto& jloc = root["location"];
+                    location_data = jloc;
+                    loc->current_location.latitude = jloc.value("latitude", 0.0);
+                    loc->current_location.longitude = jloc.value("longitude", 0.0);
+                    loc->current_location.altitude = jloc.value("altitude", 0.0);
+                    loc->current_location.accuracy = jloc.value("accuracy", 0.0);
+                    loc->current_location.vertical_accuracy = jloc.value("vertical_accuracy", 0.0);
+                    loc->current_location.bearing = jloc.value("bearing", 0.0);
+                    loc->current_location.speed = jloc.value("speed", 0.0);
+                    loc->current_location.time = jloc.value("time", 0LL);
+                    loc->current_location.time_formatted = jloc.value("time_formatted", "");
+                }
+
+                if (root.contains("mobile_networks") && root["mobile_networks"].contains("MobileNetworks")) {
+                    mobile_data = root["mobile_networks"];
+                    loc->mobile_networks.clear();
+                    for (const auto& net : root["mobile_networks"]["MobileNetworks"]) {
+                        MobileNetworkData data;
+                        data.network_type = net.value("NetworkType", "");
+                        data.mcc = net.value("MCC", "");
+                        data.mnc = net.value("MNC", "");
+                        data.cell_identity = net.value("CellIdentity", "");
+                        data.pci = net.value("PCI", 0);
+                        data.tac = net.value("TAC", 0);
+                        data.rsrp = net.value("RSRP", 0);
+                        data.rsrq = net.value("RSRQ", 0);
+                        data.rssi = net.value("RSSI", 0);
+                        data.signal_strength = net.value("SignalStrength", "");
+                        data.time = net.value("Time", 0LL);
+                        loc->mobile_networks.push_back(data);
                     }
                 }
-                
-                json locationData = j.value("location_data", json::object());
-                json mobileNetworkData = j.value("mobile_network_data_list", json::object());
-                save_to_json(*loc, mobileNetworkData, locationData);
-                
-                json response;
-                response["status"] = "ok";
-                response["count"] = count;
-                response["received_at"] = time(nullptr);
-                sock.send(zmq::buffer(response.dump()), zmq::send_flags::none);
-                
-            } catch (const exception& e) {
-                json error_response;
-                error_response["status"] = "error";
-                error_response["message"] = e.what();
-                sock.send(zmq::buffer(error_response.dump()), zmq::send_flags::none);
+
+                if (loc->recording && !location_data.empty() && !mobile_data.empty()) {
+                    save_to_json(loc, mobile_data, location_data);
+                }
+
+                loc->message_count++;
+
+                std::string log_entry = "[" + getCurrentTime() + "] Received #" + std::to_string(loc->last_send_id)
+                                      + " | Lat: " + std::to_string(loc->current_location.latitude)
+                                      + " | Lon: " + std::to_string(loc->current_location.longitude);
+                if (loc->recording) {
+                    log_entry += " [SAVED]";
+                }
+                log_entry.erase(remove(log_entry.begin(), log_entry.end(), '\n'), log_entry.end());
+                loc->message_log.push_back(log_entry);
+                if (loc->message_log.size() > 100) loc->message_log.pop_front();
+
+                json response = {{"status", "ok"}, {"count", loc->message_count}, {"message", "Data received"}};
+                std::string resp_str = response.dump();
+                socket.send(zmq::buffer(resp_str), zmq::send_flags::none);
+
+            } catch (const json::parse_error& e) {
+                std::string error_msg = "ERROR: JSON parse error";
+                socket.send(zmq::buffer(error_msg), zmq::send_flags::none);
+            } catch (const std::exception& e) {
+                std::string error_msg = "ERROR: " + std::string(e.what());
+                socket.send(zmq::buffer(error_msg), zmq::send_flags::none);
             }
-        } 
+        }
     }
 }
 
 int main() {
-    location locationInfo;
+    Location locationInfo;
     
     thread gui_thread(run_gui, &locationInfo);
-    thread server_thread(run_server, &locationInfo);
+    thread server_thread(run_server, &locationInfo, 5050);
 
     gui_thread.join();
     server_thread.join();

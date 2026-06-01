@@ -4,7 +4,7 @@ build/
 *.dll
 *.dylib
 *.vscode
-location_data.json
+data
 cmake_install.cmake
 imgui.ini
 src/*
