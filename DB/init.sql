@@ -25,11 +25,19 @@ CREATE TABLE IF NOT EXISTS cells (
     mcc TEXT,
     mnc TEXT,
     cell_identity TEXT,
+    earfcn INTEGER,
     pci INTEGER,
     tac INTEGER,
     rsrp INTEGER,
     rsrq INTEGER,
     rssi INTEGER,
+    sinr INTEGER,
     signal_strength TEXT,
+    is_active BOOLEAN DEFAULT FALSE,
     time BIGINT
 );
+
+CREATE INDEX IF NOT EXISTS idx_cells_location_id ON cells(location_id);
+CREATE INDEX IF NOT EXISTS idx_cells_pci ON cells(pci);
+CREATE INDEX IF NOT EXISTS idx_cells_earfcn ON cells(earfcn);
+CREATE INDEX IF NOT EXISTS idx_locations_coords ON locations(latitude, longitude);

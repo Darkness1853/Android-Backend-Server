@@ -24,6 +24,7 @@ struct MobileNetworkData {
     std::string mcc;
     std::string mnc;
     std::string cell_identity;
+    int earfcn = 0;
     int pci = 0;
     int tac = 0;
     int rsrp = 0;

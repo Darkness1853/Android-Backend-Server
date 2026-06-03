@@ -29,8 +29,10 @@ bool DBClient::connectWithRetries() {
             return true;
         } else {
             connected = false;
-            PQfinish(conn);
-            conn = nullptr;
+            if (conn) {
+                PQfinish(conn);
+                conn = nullptr;
+            }
             if (attempt < max_retries) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
             }
@@ -81,17 +83,20 @@ void DBClient::initializeSchema() {
             mcc TEXT,
             mnc TEXT,
             cell_identity TEXT,
+            earfcn INTEGER,
             pci INTEGER,
             tac INTEGER,
             rsrp INTEGER,
             rsrq INTEGER,
             rssi INTEGER,
+            sinr INTEGER,
             signal_strength TEXT,
+            is_active BOOLEAN DEFAULT FALSE,
             time BIGINT
         );
     )";
     PGresult* res = PQexec(conn, schema);
-    PQclear(res);
+    if (res) PQclear(res);
 }
 
 long long DBClient::insertLocationRecord(long long timestamp, int send_id) {
@@ -140,30 +145,36 @@ void DBClient::saveLocationData(long long location_id, const LocationData& loc) 
 }
 
 void DBClient::saveCellData(long long location_id, const MobileNetworkData& cell) {
-    const char* query = "INSERT INTO cells (location_id, network_type, mcc, mnc, cell_identity, pci, tac, rsrp, rsrq, rssi, signal_strength, time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)";
-    const char* params[12];
+    const char* query = "INSERT INTO cells (location_id, network_type, mcc, mnc, cell_identity, earfcn, pci, tac, rsrp, rsrq, rssi, sinr, signal_strength, is_active, time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)";
+    const char* params[15];
     std::string loc_id_str = std::to_string(location_id);
+    std::string earfcn_str = std::to_string(cell.earfcn);
     std::string pci_str = std::to_string(cell.pci);
     std::string tac_str = std::to_string(cell.tac);
     std::string rsrp_str = std::to_string(cell.rsrp);
     std::string rsrq_str = std::to_string(cell.rsrq);
     std::string rssi_str = std::to_string(cell.rssi);
+    std::string sinr_str = std::to_string(cell.sinr);
     std::string time_str = std::to_string(cell.time);
+    std::string is_active_str = cell.is_active ? "true" : "false";
 
     params[0] = loc_id_str.c_str();
     params[1] = cell.network_type.c_str();
     params[2] = cell.mcc.c_str();
     params[3] = cell.mnc.c_str();
     params[4] = cell.cell_identity.c_str();
-    params[5] = pci_str.c_str();
-    params[6] = tac_str.c_str();
-    params[7] = rsrp_str.c_str(); 
-    params[8] = rsrq_str.c_str();
-    params[9] = rssi_str.c_str();
-    params[10] = cell.signal_strength.c_str();
-    params[11] = time_str.c_str();
+    params[5] = earfcn_str.c_str();
+    params[6] = pci_str.c_str();
+    params[7] = tac_str.c_str();
+    params[8] = rsrp_str.c_str(); 
+    params[9] = rsrq_str.c_str();
+    params[10] = rssi_str.c_str();
+    params[11] = sinr_str.c_str();
+    params[12] = cell.signal_strength.c_str();
+    params[13] = is_active_str.c_str();
+    params[14] = time_str.c_str();
 
-    PGresult* res = PQexecParams(conn, query, 12, NULL, params, NULL, NULL, 0);
+    PGresult* res = PQexecParams(conn, query, 15, NULL, params, NULL, NULL, 0);
     PQclear(res);
 }
 
@@ -192,21 +203,46 @@ void DBClient::saveJsonData(const json& root) {
         saveLocationData(location_id, ld);
     }
 
+    if (root.contains("connected_cell")) {
+        const auto& connected = root["connected_cell"];
+        if (connected.value("has_connected_cell", false)) {
+            MobileNetworkData cell;
+            cell.network_type = "CellInfoLte";
+            cell.mcc = connected.value("mcc", "");
+            cell.mnc = connected.value("mnc", "");
+            cell.cell_identity = std::to_string(connected.value("earfcn", 0));
+            cell.earfcn = connected.value("earfcn", 0);
+            cell.pci = connected.value("pci", 0);
+            cell.tac = connected.value("tac", 0);
+            cell.rsrp = connected.value("rsrp", 0);
+            cell.rsrq = connected.value("rsrq", 0);
+            cell.rssi = connected.value("rssi", 0);
+            cell.sinr = connected.value("sinr", 0);
+            cell.signal_strength = connected.value("signal_quality", "");
+            cell.time = timestamp;
+            cell.is_active = true;
+            saveCellData(location_id, cell);
+        }
+    }
+
     if (root.contains("mobile_networks") && root["mobile_networks"].contains("MobileNetworks")) {
         const auto& networks = root["mobile_networks"]["MobileNetworks"];
         for (const auto& net : networks) {
             MobileNetworkData cell;
-            cell.network_type = net.value("NetworkType", "");
-            cell.mcc = net.value("MCC", "");
-            cell.mnc = net.value("MNC", "");
-            cell.cell_identity = net.value("CellIdentity", "");
-            cell.pci = net.value("PCI", 0);
-            cell.tac = net.value("TAC", 0);
-            cell.rsrp = net.value("RSRP", 0);
-            cell.rsrq = net.value("RSRQ", 0);
-            cell.rssi = net.value("RSSI", 0);
-            cell.signal_strength = net.value("SignalStrength", "");
-            cell.time = net.value("Time", 0LL);
+            cell.network_type = "CellInfoLte";
+            cell.mcc = net.value("mcc", "");
+            cell.mnc = net.value("mnc", "");
+            cell.cell_identity = std::to_string(net.value("earfcn", 0));
+            cell.earfcn = net.value("earfcn", 0);
+            cell.pci = net.value("pci", 0);
+            cell.tac = net.value("tac", 0);
+            cell.rsrp = net.value("rsrp", 0);
+            cell.rsrq = net.value("rsrq", 0);
+            cell.rssi = net.value("rssi", 0);
+            cell.sinr = net.value("sinr", 0);
+            cell.signal_strength = "RSRP: " + std::to_string(cell.rsrp);
+            cell.time = net.value("time", timestamp);
+            cell.is_active = net.value("is_registered", false);
             saveCellData(location_id, cell);
         }
     }
