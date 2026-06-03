@@ -46,6 +46,7 @@ set(PROJECT_SOURCES
     ${SRC_DIR}/gui.cpp
     ${SRC_DIR}/db_client.cpp
     ${SRC_DIR}/tile_manager.cpp
+    ${SRC_DIR}/heatmap.cpp
     ${SRC_DIR}/map.cpp
     ${IMGUI_SOURCES}
     ${IMPLOT_SOURCES}
@@ -56,12 +57,14 @@ set(PROJECT_HEADERS
     ${INCLUDE_DIR}/server.hpp
     ${INCLUDE_DIR}/gui.hpp
     ${INCLUDE_DIR}/db_client.hpp
+    ${INCLUDE_DIR}/heatmap.hpp
     ${INCLUDE_DIR}/tile_manager.hpp
     ${INCLUDE_DIR}/map.hpp
     ${INCLUDE_DIR}/MapPoint.hpp
 )
 
-add_executable(location_server ${PROJECT_SOURCES} ${PROJECT_HEADERS})
+add_executable(location_server ${PROJECT_SOURCES} ${PROJECT_HEADERS}
+    src/heatmap.cpp)
 
 target_include_directories(location_server PRIVATE
     ${INCLUDE_DIR}

@@ -157,7 +157,7 @@ void DBClient::saveCellData(long long location_id, const MobileNetworkData& cell
     params[4] = cell.cell_identity.c_str();
     params[5] = pci_str.c_str();
     params[6] = tac_str.c_str();
-    params[7] = rsrp_str.c_str();
+    params[7] = rsrp_str.c_str(); 
     params[8] = rsrq_str.c_str();
     params[9] = rssi_str.c_str();
     params[10] = cell.signal_strength.c_str();

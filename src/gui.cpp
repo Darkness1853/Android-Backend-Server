@@ -1,5 +1,9 @@
 #include "gui.hpp"
 #include "map.hpp"
+#include "heatmap.hpp"
+#include "db_client.hpp"
+#include "gui.hpp"
+#include "map.hpp"
 #include "db_client.hpp"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -21,30 +25,41 @@ static void window_close_callback(GLFWwindow* window, Location* loc) {
     glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
-static void load_points_from_db(pqxx::connection& db_conn) {
-    map_points.clear();
+static void load_points_from_db(std::vector<MapPoint>& points, pqxx::connection& db_conn) {
+    points.clear();
     try {
         pqxx::work txn(db_conn);
+        
         std::string query = 
-            "SELECT l.latitude, l.longitude, loc.timestamp "
+            "SELECT DISTINCT ON (loc.timestamp) "
+            "   l.latitude, l.longitude, loc.timestamp, "
+            "   c.rsrp, c.pci, c.network_type "
             "FROM locations l "
             "JOIN location loc ON l.location_id = loc.id "
+            "LEFT JOIN cells c ON loc.id = c.location_id "
             "WHERE l.latitude IS NOT NULL "
-            "AND l.longitude IS NOT NULL "
-            "ORDER BY loc.timestamp DESC";
+            "   AND l.longitude IS NOT NULL "
+            "   AND c.rsrp IS NOT NULL "
+            "   AND c.rsrp BETWEEN -140 AND -40 "
+            "ORDER BY loc.timestamp DESC, c.id";
         
         pqxx::result result = txn.exec(query);
+        
         for (const auto& row : result) {
             MapPoint p;
             p.lat = row[0].as<double>();
             p.lon = row[1].as<double>();
             p.timestamp = row[2].as<long long>();
-            p.signal_strength = -80;
-            map_points.push_back(p);
+            p.signal_strength = row[3].as<int>();
+            p.pci = row[4].as<int>();
+            p.type = row[5].as<std::string>();
+            points.push_back(p);
         }
+        
         txn.commit();
-        update_map_points(map_points);
-        std::cout << "Loaded " << map_points.size() << " points from database" << std::endl;
+        update_map_points(points);
+        update_heatmap_points(points);
+        
     } catch (const std::exception& e) {
         std::cerr << "Error loading points: " << e.what() << std::endl;
     }
@@ -81,13 +96,14 @@ void run_gui(Location* loc) {
     const char* graph_items[] = { "RSRP", "RSRQ", "RSSI", "SINR" };
 
     init_map();
+    init_heatmap();
 
     std::string conn_str = "dbname=visual_db user=postgres password=postgres host=localhost port=5435";
     std::unique_ptr<pqxx::connection> db_conn = nullptr;
     try {
         db_conn = std::make_unique<pqxx::connection>(conn_str);
         if (db_conn->is_open()) {
-            load_points_from_db(*db_conn);
+            load_points_from_db(map_points, *db_conn);
             loc->db_connected = true;
         } else {
             loc->db_connected = false;
@@ -295,8 +311,6 @@ void run_gui(Location* loc) {
             }
 
             if (ImGui::BeginTabItem("Map")) {
-                ImGui::BeginChild("MapContent", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                
                 if (ImGui::Button("Center on Latest")) {
                     std::lock_guard<std::mutex> lock(loc->mtx);
                     if (loc->current_location.latitude != 0 || loc->current_location.longitude != 0) {
@@ -318,7 +332,7 @@ void run_gui(Location* loc) {
                 ImGui::SameLine();
                 if (ImGui::Button("Refresh Points")) {
                     if (db_conn && db_conn->is_open()) {
-                        load_points_from_db(*db_conn);
+                        load_points_from_db(map_points, *db_conn);
                     }
                 }
                 
@@ -329,16 +343,54 @@ void run_gui(Location* loc) {
                 float w = ImGui::GetContentRegionAvail().x;
                 float h = w * 0.6f;
                 if (h < 200) h = 200;
+                
+                ImGui::BeginChild("MapArea", ImVec2(w, h), ImGuiChildFlags_Borders);
+                
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 cp = ImGui::GetCursorScreenPos();
                 
                 ImGui::InvisibleButton("osm_map", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
-                dl->AddRectFilled(cp, ImVec2(cp.x + w, cp.y + h), IM_COL32(30,30,40,255));
-                dl->AddRect(cp, ImVec2(cp.x + w, cp.y + h), IM_COL32(100,100,100,255));
+                
                 draw_map(dl, cp, ImVec2(w, h));
                 handle_map_input(cp, ImVec2(w, h));
                 
                 ImGui::EndChild();
+                
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Heatmap")) {
+                if (ImGui::Button("Refresh Heatmap")) {
+                    if (db_conn && db_conn->is_open()) {
+                        load_points_from_db(map_points, *db_conn);
+                        update_heatmap_points(map_points);
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::Text("Points: %zu", map_points.size());
+                
+                ImGui::Separator();
+
+                draw_heatmap_ui();
+                
+                ImGui::Separator();
+
+                float w = ImGui::GetContentRegionAvail().x;
+                float h = w * 0.6f;
+                if (h < 200) h = 200;
+                
+                ImGui::BeginChild("HeatmapArea", ImVec2(w, h), ImGuiChildFlags_Borders);
+                
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 cp = ImGui::GetCursorScreenPos();
+                
+                ImGui::InvisibleButton("heatmap_area", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+                
+                draw_heatmap(dl, cp, ImVec2(w, h));
+                handle_heatmap_input(cp, ImVec2(w, h));
+                
+                ImGui::EndChild();
+                
                 ImGui::EndTabItem();
             }
             
